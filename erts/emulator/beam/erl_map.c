@@ -542,7 +542,7 @@ static Eterm hashmap_from_validated_list(Process *p,
     /* Memory management depends on the line below */
     hxns = NULL;
     ERTS_VERIFY_UNUSED_TEMP_ALLOC(p);
-    
+
    /* No yielding in the loops below as the number of loop
       iterations must be small */
 
