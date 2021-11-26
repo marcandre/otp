@@ -2086,7 +2086,7 @@ Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
 	tup    = make_tuple(shp);
 	*shp++ = make_arityval(n+1);
 
-	hp    = HAlloc(p, 3 + n + 1);
+	hp    = HAlloc(p, MAP_HEADER_FLATMAP_SZ + n + 1);
 	res   = make_flatmap(hp);
 	*hp++ = MAP_HEADER_FLATMAP;
 	*hp++ = n + 1;
