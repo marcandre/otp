@@ -2020,7 +2020,7 @@ Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
     Uint32 hx;
     Eterm res;
     if (is_flatmap(map)) {
-	Sint n,i;
+	Sint n,i,lo = -1,hi;
 	Sint c = 0;
 	Eterm* hp, *shp;
 	Eterm *ks, *vs, tup;
@@ -2065,14 +2065,18 @@ Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
 		}
 	    }
 	} else {
-	    for( i = 0; i < n; i ++) {
-		if (EQ(ks[i], key)) {
-		    goto found_key;
-		} else {
-		    *hp++ = *vs++;
-		}
-	    }
-	}
+            lo = 0; hi = n;
+            while (lo < hi) {
+                i = (lo + hi) / 2;
+                c = CMP_TERM(ks[i], key);
+                if (c == 0)
+                    goto found_key;
+                if (c < 0)
+                    lo = i + 1;
+                else
+                    hi = i;
+            }
+        }
 
 	/* the map will grow */
 
@@ -2104,21 +2108,20 @@ Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
 	ks = flatmap_get_keys(mp);
 	vs = flatmap_get_values(mp);
 
-	ASSERT(n >= 0);
-
 	/* copy map in order */
-	while (n && ((c = CMP_TERM(*ks, key)) < 0)) {
+        if (lo == -1)
+            for( lo=0; lo < n && CMP_TERM(ks[lo], key) < 0; lo++)
+                ;
+
+	for (i=0; i < lo; i++) {
 	    *shp++ = *ks++;
 	    *hp++  = *vs++;
-	    n--;
 	}
 
 	*shp++ = key;
 	*hp++  = value;
 
-	ASSERT(n >= 0);
-
-	while(n--) {
+	for (i=lo; i < n; i++) {
 	    *shp++ = *ks++;
 	    *hp++  = *vs++;
 	}
@@ -2134,7 +2137,12 @@ found_key:
             HRelease(p, shp + MAP_HEADER_FLATMAP_SZ + n, shp);
             return map;
         } else {
-            *hp++ = value;
+            if (lo != -1 && i) {
+                sys_memcpy(hp, vs, i*sizeof(Eterm));
+                hp += i;
+                vs += i;
+            }
+           *hp++ = value;
             vs++;
             if (++i < n)
                sys_memcpy(hp, vs, (n - i)*sizeof(Eterm));
