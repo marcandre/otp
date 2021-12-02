@@ -54,6 +54,7 @@
  * - maps:merge/2
  * - maps:new/0
  * - maps:put/3
+ * - maps:putx/3
  * - maps:remove/2
  * - maps:take/2
  * - maps:to_list/1
@@ -1819,6 +1820,16 @@ BIF_RETTYPE maps_put_3(BIF_ALIST_3) {
     BIF_ERROR(BIF_P, BADMAP);
 }
 
+/* maps:putx/3 */
+
+BIF_RETTYPE maps_putx_3(BIF_ALIST_3) {
+    if (is_map(BIF_ARG_3)) {
+	BIF_RET(erts_maps_putx(BIF_P, BIF_ARG_1, BIF_ARG_2, BIF_ARG_3));
+    }
+    BIF_P->fvalue = BIF_ARG_3;
+    BIF_ERROR(BIF_P, BADMAP);
+}
+
 /* maps:take/2 */
 
 BIF_RETTYPE maps_take_2(BIF_ALIST_2) {
@@ -2017,6 +2028,148 @@ found_key:
 }
 
 Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
+    Uint32 hx;
+    Eterm res;
+    if (is_flatmap(map)) {
+	Sint n,i,lo = -1,hi;
+	Sint c = 0;
+	Eterm* hp, *shp;
+	Eterm *ks, *vs, tup;
+	flatmap_t *mp = (flatmap_t*)flatmap_val(map);
+
+	n = flatmap_get_size(mp);
+
+	if (n == 0) {
+	    hp    = HAlloc(p, MAP_HEADER_FLATMAP_SZ + 1 + 2);
+	    tup   = make_tuple(hp);
+	    *hp++ = make_arityval(1);
+	    *hp++ = key;
+	    res   = make_flatmap(hp);
+	    *hp++ = MAP_HEADER_FLATMAP;
+	    *hp++ = 1;
+	    *hp++ = tup;
+	    *hp++ = value;
+
+	    return res;
+	}
+
+	ks = flatmap_get_keys(mp);
+	vs = flatmap_get_values(mp);
+
+	/* only allocate for values,
+	 * assume key-tuple will be intact
+	 */
+
+	hp  = HAlloc(p, MAP_HEADER_FLATMAP_SZ + n);
+	shp = hp; /* save hp, used if optimistic update fails */
+	res = make_flatmap(hp);
+	*hp++ = MAP_HEADER_FLATMAP;
+	*hp++ = n;
+	*hp++ = mp->keys;
+
+	if (is_immed(key)) {
+	    for( i = 0; i < n; i ++) {
+		if (ks[i] == key) {
+                    goto found_key;
+		} else {
+		    *hp++ = *vs++;
+		}
+	    }
+	} else {
+            lo = 0; hi = n;
+            while (lo < hi) {
+                i = (lo + hi) / 2;
+                c = CMP_TERM(ks[i], key);
+                if (c == 0)
+                    goto found_key;
+                if (c < 0)
+                    lo = i + 1;
+                else
+                    hi = i;
+            }
+        }
+
+	/* the map will grow */
+
+	if (n >= MAP_SMALL_MAP_LIMIT) {
+            ErtsHeapFactory factory;
+	    HRelease(p, shp + MAP_HEADER_FLATMAP_SZ + n, shp);
+	    ks = flatmap_get_keys(mp);
+	    vs = flatmap_get_values(mp);
+
+            erts_factory_proc_init(&factory, p);
+	    res = erts_hashmap_from_ks_and_vs_extra(&factory,ks,vs,n,key,value);
+            erts_factory_close(&factory);
+
+	    return res;
+	}
+
+	/* still a small map. need to make a new tuple,
+	 * use old hp since it needs to be recreated anyway. */
+
+	tup    = make_tuple(shp);
+	*shp++ = make_arityval(n+1);
+
+	hp    = HAlloc(p, MAP_HEADER_FLATMAP_SZ + n + 1);
+	res   = make_flatmap(hp);
+	*hp++ = MAP_HEADER_FLATMAP;
+	*hp++ = n + 1;
+	*hp++ = tup;
+
+	ks = flatmap_get_keys(mp);
+	vs = flatmap_get_values(mp);
+
+	/* copy map in order */
+        if (lo == -1)
+            for( lo=0; lo < n && CMP_TERM(ks[lo], key) < 0; lo++)
+                ;
+
+	for (i=0; i < lo; i++) {
+	    *shp++ = *ks++;
+	    *hp++  = *vs++;
+	}
+
+	*shp++ = key;
+	*hp++  = value;
+
+	for (i=lo; i < n; i++) {
+	    *shp++ = *ks++;
+	    *hp++  = *vs++;
+	}
+	/* we have one word remaining
+	 * this will work out fine once we get the size word
+	 * in the header.
+	 */
+	*shp = make_pos_bignum_header(0);
+	return res;
+
+found_key:
+        if(*vs == value) {
+            HRelease(p, shp + MAP_HEADER_FLATMAP_SZ + n, shp);
+            return map;
+        } else {
+            if (lo != -1 && i) {
+                sys_memcpy(hp, vs, i*sizeof(Eterm));
+                hp += i;
+                vs += i;
+            }
+           *hp++ = value;
+            vs++;
+            if (++i < n)
+               sys_memcpy(hp, vs, (n - i)*sizeof(Eterm));
+            return res;
+        }
+    }
+    ASSERT(is_hashmap(map));
+
+    hx  = hashmap_make_hash(key);
+    res = erts_hashmap_insert(p, hx, key, value, map, 0);
+    ASSERT(is_hashmap(res));
+
+    return res;
+}
+
+Eterm erts_maps_putx(Process *p, Eterm key, Eterm value, Eterm map) {
     Uint32 hx;
     Eterm res;
     if (is_flatmap(map)) {
