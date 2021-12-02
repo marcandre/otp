@@ -79,6 +79,7 @@ struct ErtsWStack_;
 struct ErtsEStack_;
 
 Eterm  erts_maps_putx(Process *p, Eterm key, Eterm value, Eterm map);
+Eterm  erts_maps_puty(Process *p, Eterm key, Eterm value, Eterm map);
 Eterm  erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map);
 int    erts_maps_update(Process *p, Eterm key, Eterm value, Eterm map, Eterm *res);
 int    erts_maps_remove(Process *p, Eterm key, Eterm map, Eterm *res);

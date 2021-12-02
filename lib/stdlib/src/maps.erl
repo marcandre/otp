@@ -31,7 +31,7 @@
 %% BIFs
 -export([get/2, find/2, from_list/1, from_keys/2,
          is_key/2, keys/1, merge/2,
-         put/3, putx/3, remove/2, take/2,
+         put/3, putx/3, puty/3, remove/2, take/2,
          to_list/1, update/3, values/1]).
 
 -opaque iterator(Key, Value) :: {Key, Value, iterator(Key, Value)} | none
@@ -212,6 +212,15 @@ put(_,_,_) -> erlang:nif_error(undef).
     Map2 :: map().
 
 putx(_,_,_) -> erlang:nif_error(undef).
+
+%% Shadowed by erl_bif_types: maps:puty/3
+-spec puty(Key,Value,Map1) -> Map2 when
+    Key :: term(),
+    Value :: term(),
+    Map1 :: map(),
+    Map2 :: map().
+
+puty(_,_,_) -> erlang:nif_error(undef).
 
 %% Shadowed by erl_bif_types: maps:remove/2
 -spec remove(Key,Map1) -> Map2 when
