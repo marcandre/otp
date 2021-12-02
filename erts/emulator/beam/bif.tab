@@ -416,7 +416,7 @@ bif erl_ddll:monitor/2
 bif erl_ddll:demonitor/1
 
 #
-# Bifs in the re module 
+# Bifs in the re module
 #
 bif re:version/0
 bif re:compile/1
@@ -599,7 +599,7 @@ bif erlang:dt_get_tag_data/0
 bif erlang:dt_spread_tag/1
 bif erlang:dt_restore_tag/1
 
-# These are dummies even with enabled dynamic trace unless vm probes are enabled. 
+# These are dummies even with enabled dynamic trace unless vm probes are enabled.
 # They are also internal, for dtrace tags sent to the VM's own drivers (efile)
 bif erlang:dt_prepend_vm_tag_data/1
 bif erlang:dt_append_vm_tag_data/1
