@@ -101,6 +101,8 @@ static Eterm hashmap_info(Process *p, Eterm node);
 static Eterm hashmap_bld_tuple_uint(Uint **hpp, Uint *szp, Uint n, Uint nums[]);
 static int hxnodecmp(const void* a, const void* b);
 static int hxnodecmpkey(const void* a, const void* b);
+static int small_map_search_type(Eterm key);
+static int small_map_element_search_type(Eterm key);
 #define swizzle32(D,S) \
     do { \
 	(D) = ((S) & 0x0000000f) << 28 | ((S) & 0x000000f0) << 20  \
@@ -2065,12 +2067,49 @@ found_key:
     return 0;
 }
 
+#define LINEAR 0
+#define BINARY 1
+/*
+ * Decides if a small map lookup should be linear or binary, based on the
+ * non-immediate `key`.
+ *
+ * If the cost of doing an ordered comparison (CMP_TERM) is believed to be
+ * similar to the cost of an equality test (EQ), and also potentially
+ * expensive, then BINARY is returned.
+ * This is the case for a binary, or a structure like a list/tuple with a
+ * first element that is a binary or a non-atom immediate.
+ * Otherwise LINEAR is returned.
+ */
+static int small_map_search_type(Eterm key) {
+    Eterm *tpl;
+
+    if (is_binary(key)) {
+	return BINARY;
+    } else if (is_tuple(key)) {
+        tpl = tuple_val(key);
+        if (arityval(tpl[0]) == 0)
+            return BINARY;
+	return small_map_element_search_type(tpl[1]);
+    } else if (is_list(key)) {
+	key = CAR(list_val(key));
+	return small_map_element_search_type(key);
+    }
+    return LINEAR;
+}
+
+static int small_map_element_search_type(Eterm key) {
+    if (is_immed(key))
+	return is_atom(key) ? LINEAR : BINARY;
+    return small_map_search_type(key);
+}
+
 Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
     Uint32 hx;
     Eterm res;
     if (is_flatmap(map)) {
-	Sint n,i;
+	Sint n,i,lo,hi;
 	Sint c = 0;
+	int search;
 	Eterm* hp, *shp;
 	Eterm *ks, *vs, tup;
 	flatmap_t *mp = (flatmap_t*)flatmap_val(map);
@@ -2106,6 +2145,7 @@ Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
 	*hp++ = mp->keys;
 
 	if (is_immed(key)) {
+	    search = LINEAR;
 	    for( i = 0; i < n; i ++) {
 		if (ks[i] == key) {
                     goto found_key;
@@ -2113,13 +2153,27 @@ Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
 		    *hp++ = *vs++;
 		}
 	    }
-	} else {
+	} else if (small_map_search_type(key) == LINEAR) {
+	    search = LINEAR;
 	    for( i = 0; i < n; i ++) {
 		if (EQ(ks[i], key)) {
 		    goto found_key;
 		} else {
 		    *hp++ = *vs++;
 		}
+	    }
+	} else {
+	    search = BINARY;
+	    lo = 0; hi = n;
+	    while (lo < hi) {
+		i = (lo + hi) / 2;
+		c = CMP_TERM(ks[i], key);
+		if (c == 0)
+		    goto found_key;
+		if (c < 0)
+		    lo = i + 1;
+		else
+		    hi = i;
 	    }
 	}
 
@@ -2153,21 +2207,20 @@ Eterm erts_maps_put(Process *p, Eterm key, Eterm value, Eterm map) {
 	ks = flatmap_get_keys(mp);
 	vs = flatmap_get_values(mp);
 
-	ASSERT(n >= 0);
+	if (search == LINEAR)
+	    for( lo=0; lo < n && CMP_TERM(ks[lo], key) < 0; lo++)
+		;
 
 	/* copy map in order */
-	while (n && ((c = CMP_TERM(*ks, key)) < 0)) {
+	for (i=0; i < lo; i++) {
 	    *shp++ = *ks++;
 	    *hp++  = *vs++;
-	    n--;
 	}
 
 	*shp++ = key;
 	*hp++  = value;
 
-	ASSERT(n >= 0);
-
-	while(n--) {
+	for (; i < n; i++) {
 	    *shp++ = *ks++;
 	    *hp++  = *vs++;
 	}
@@ -2183,6 +2236,11 @@ found_key:
             HRelease(p, shp + MAP_HEADER_FLATMAP_SZ + n, shp);
             return map;
         } else {
+	    if (search == BINARY && i) {
+		sys_memcpy(hp, vs, i*sizeof(Eterm));
+		hp += i;
+		vs += i;
+	    }
             *hp++ = value;
             vs++;
             if (++i < n)
